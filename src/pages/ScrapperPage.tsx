@@ -18,6 +18,10 @@ import { Confetti } from '../components/Confetti';
 import type { ScrapperEvent } from '../ipc/api';
 
 const DEFAULT_URL = 'https://www.workana.com/jobs?language=pt';
+const PROVIDERS = [
+  { label: 'Workana', url: 'https://www.workana.com/jobs?language=pt' },
+  { label: 'Freelancer', url: 'https://www.freelancer.com/jobs' },
+];
 const URL_SETTING_KEY = 'scrapper.start_url';
 const MAX_PAGES = 50;
 const MAX_LINES = 800;
@@ -45,15 +49,17 @@ function nowTime(): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-function isWorkanaUrl(raw: string): boolean {
+/** Domínios suportados pelos scrapers (o backend escolhe o scraper pelo domínio). */
+function isSupportedUrl(raw: string): boolean {
   try {
-    return /(^|\.)workana\.com$/i.test(new URL(raw).hostname);
+    return /(^|\.)(workana|freelancer)\.com$/i.test(new URL(raw).hostname);
   } catch {
     return false;
   }
 }
 
 export function ScrapperPage() {
+  const [customMode, setCustomMode] = useState(false);
   const [url, setUrl] = useState(DEFAULT_URL);
   const [pages, setPages] = useState(3);
   const [delayMin, setDelayMin] = useState(2);
@@ -70,7 +76,7 @@ export function ScrapperPage() {
   const logRef = useRef<HTMLDivElement>(null);
   const confettiTimer = useRef<number | null>(null);
 
-  const urlValid = useMemo(() => isWorkanaUrl(url), [url]);
+  const urlValid = useMemo(() => isSupportedUrl(url), [url]);
 
   const pushLine = (text: string, level: LogLevel = 'info') => {
     // Mais recentes no TOPO: prepend e descarta as mais antigas (fim do array).
@@ -103,13 +109,13 @@ export function ScrapperPage() {
         if (m.get('playwright.delay_max_ms') && Number.isFinite(maxMs)) setDelayMax(maxMs / 1000);
         if (Number.isFinite(cap) && cap > 0) setMaxPages(cap);
       })
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   // Persiste a URL inicial no banco (última usada). Chamada no blur e ao iniciar.
   const persistUrl = (value: string) => {
     const v = value.trim();
-    if (v) api.settings.set(URL_SETTING_KEY, v).catch(() => {});
+    if (v) api.settings.set(URL_SETTING_KEY, v).catch(() => { });
   };
 
   const celebrate = () => {
@@ -127,7 +133,7 @@ export function ScrapperPage() {
 
       switch (evt.type) {
         case 'start':
-          pushLine(`🚀 Iniciando raspagem do Workana · ${evt.totalPages ?? '?'} página(s)`, 'info');
+          pushLine(`🚀 Iniciando raspagem · ${evt.totalPages ?? '?'} página(s)`, 'info');
           break;
         case 'page':
           pushLine(evt.message ?? `📄 Página ${evt.page}/${evt.totalPages}`, evt.level ?? 'info');
@@ -216,7 +222,7 @@ export function ScrapperPage() {
           <div>
             <h1 className="text-[20px] font-bold text-primary leading-tight">Scrapper</h1>
             <p className="text-[13px] text-secondary mt-0.5">
-              Raspa vagas do Workana, abre cada uma para ler a descrição completa e grava em{' '}
+              Raspa vagas do Workana ou do Freelancer.com e grava em{' '}
               <code className="font-mono">freelas/</code> no formato JSON do radar.
             </p>
           </div>
@@ -227,20 +233,43 @@ export function ScrapperPage() {
           <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto_auto] gap-3 items-end">
             <label className="block min-w-0">
               <span className="text-[12px] font-medium text-secondary uppercase tracking-wider">
-                URL inicial (Workana)
+                Site
               </span>
-              <input
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                onBlur={(e) => persistUrl(e.target.value)}
+              <select
+                value={customMode ? 'custom' : (PROVIDERS.find((p) => p.url === url)?.url ?? 'custom')}
+                onChange={(e) => {
+                  if (e.target.value === 'custom') {
+                    setCustomMode(true);
+                  } else {
+                    setCustomMode(false);
+                    setUrl(e.target.value);
+                    persistUrl(e.target.value);
+                  }
+                }}
                 disabled={running}
-                placeholder="https://www.workana.com/jobs?language=pt"
-                className={cn(
-                  inputCls,
-                  'mt-1.5 font-mono text-[13px]',
-                  !urlValid && url.trim() !== '' && 'border-[#dc2626] focus:border-[#dc2626]',
-                )}
-              />
+                className={cn(inputCls, 'mt-1.5 text-[13px]')}
+              >
+                {PROVIDERS.map((p) => (
+                  <option key={p.url} value={p.url}>
+                    {p.label}
+                  </option>
+                ))}
+                <option value="custom">Personalizado…</option>
+              </select>
+              {customMode && (
+                <input
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  onBlur={(e) => persistUrl(e.target.value)}
+                  disabled={running}
+                  placeholder="https://www.workana.com/jobs?language=pt"
+                  className={cn(
+                    inputCls,
+                    'mt-1.5 font-mono text-[13px]',
+                    !urlValid && url.trim() !== '' && 'border-[#dc2626] focus:border-[#dc2626]',
+                  )}
+                />
+              )}
             </label>
 
             <label className="block w-[100px]">
@@ -304,7 +333,7 @@ export function ScrapperPage() {
               <button
                 onClick={handleStart}
                 disabled={!urlValid}
-                title={!urlValid ? 'Informe uma URL válida do workana.com' : 'Iniciar raspagem'}
+                title={!urlValid ? 'Informe uma URL válida do workana.com ou freelancer.com' : 'Iniciar raspagem'}
                 className="h-[40px] px-4 rounded-xl bg-purple text-white text-[13.5px] font-semibold flex items-center gap-2 hover:opacity-90 transition disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
               >
                 <Play size={14} fill="currentColor" />
@@ -315,7 +344,8 @@ export function ScrapperPage() {
 
           {!urlValid && url.trim() !== '' && (
             <p className="text-[12px] text-[#dc2626] mt-2">
-              A URL precisa ser do domínio <strong>workana.com</strong>.
+              A URL precisa ser do domínio <strong>workana.com</strong> ou{' '}
+              <strong>freelancer.com</strong>.
             </p>
           )}
         </div>

@@ -10,6 +10,7 @@ import { AgentOrchestrator } from '../services/AgentOrchestrator';
 import { ActivityLogger } from '../services/ActivityLogger';
 import { ScanScheduler } from '../scanner/ScanScheduler';
 import { WorkanaScraper, type ScrapperOptions } from '../scanner/WorkanaScraper';
+import { FreelancerScraper } from '../scanner/FreelancerScraper';
 import { MatchEngine } from '../services/MatchEngine';
 import { TeamPipeline, type PipelineOpportunity } from '../services/TeamPipeline';
 import { readAppConfig, updateAppConfig, ensureWorkspaceExists, type AppConfig } from '../services/AppConfig';
@@ -463,18 +464,35 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null) {
     return tx(id);
   });
 
-  // --- Scrapper (raspagem do Workana via Playwright) ---
+  // --- Scrapper (raspagem via Playwright) ---
+  // Um único par de canais atende os dois scrapers; o alvo é escolhido pelo
+  // domínio da URL. `freelancer.com` → FreelancerScraper, senão → WorkanaScraper.
+  const pickScraper = (url: string) => {
+    try {
+      if (/(^|\.)freelancer\.com$/i.test(new URL(url).hostname)) return FreelancerScraper;
+    } catch {
+      /* URL inválida → deixa o WorkanaScraper reportar o erro de validação */
+    }
+    return WorkanaScraper;
+  };
+
   ipcMain.handle(CH.scrapper.start, (_e, opts: ScrapperOptions) => {
-    return WorkanaScraper.start(opts);
+    return pickScraper(opts.url).start(opts);
   });
 
   ipcMain.handle(CH.scrapper.cancel, () => {
-    return WorkanaScraper.cancel();
+    // Só um roda por vez; cancela o que estiver ativo.
+    const cancelledWorkana = WorkanaScraper.cancel();
+    const cancelledFreelancer = FreelancerScraper.cancel();
+    return cancelledWorkana || cancelledFreelancer;
   });
 
   // Encaminha o streaming de progresso da raspagem pra UI (mesmo padrão do
-  // AgentOrchestrator/TeamPipeline).
+  // AgentOrchestrator/TeamPipeline). Ambos os scrapers usam o mesmo canal.
   WorkanaScraper.on('event', (evt) => {
+    broadcast(getMainWindow(), CH.scrapper.event, evt);
+  });
+  FreelancerScraper.on('event', (evt) => {
     broadcast(getMainWindow(), CH.scrapper.event, evt);
   });
 
