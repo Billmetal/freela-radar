@@ -42,6 +42,16 @@ export function readAppConfig(): AppConfig {
   try {
     const raw = fs.readFileSync(file, 'utf-8');
     const parsed = JSON.parse(raw) as Partial<AppConfig>;
+    if (parsed.dbPath) {
+      const isDir = parsed.dbPath.endsWith('/') || parsed.dbPath.endsWith('\\');
+      let isExistingDir = false;
+      try {
+        isExistingDir = fs.existsSync(parsed.dbPath) && fs.statSync(parsed.dbPath).isDirectory();
+      } catch { }
+      if (isDir || isExistingDir) {
+        parsed.dbPath = path.join(parsed.dbPath, 'freela-radar.db');
+      }
+    }
     _cache = { ...defaults(), ...parsed };
     return _cache;
   } catch {
